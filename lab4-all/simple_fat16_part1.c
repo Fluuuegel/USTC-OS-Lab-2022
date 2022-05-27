@@ -30,6 +30,12 @@ void sector_read(FILE *fd, unsigned int secnum, void *buffer)
   fread(buffer, BYTES_PER_SECTOR, 1, fd);
 }
 
+/** 
+ * 三备份（之后的三备份代码均在注释当中，你需要复制三分fat16.img并分别命名为fat16.img, fat16_2.img, fat16_3.img
+ * 并修改其中一个镜像文件中一个文件的一个字节（不可删去或增添过多字节，因为在sector_read文件中无法分配新簇），接下来运行此代码后
+ * 再单独查看先前修改的那个镜像文件的”错误字节“是否已经被恢复
+ */
+
 // void sector_read(FILE *fd, unsigned int secnum, void *buffer)
 // {
 //   char buf_tmp1[BYTES_PER_SECTOR];
