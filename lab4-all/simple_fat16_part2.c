@@ -4,6 +4,11 @@
 
 #include "fat16.h"
 
+extern const char *FAT_FILE_NAME2;
+extern const char *FAT_FILE_NAME3;
+extern FILE *fd2;
+extern FILE *fd3;
+
 // 忘记写到fat16.h 里的函数定义
 extern FAT16* get_fat16_ins();
 
@@ -51,28 +56,39 @@ int is_cluster_inuse(uint16_t cluster_num)
  * @param data      要写入表项的数据，如下一个簇号，CLUSTER_END（文件末尾），或者0（释放该簇）等等
  * @return int      成功返回0
  */
-int write_fat_entry(FAT16 *fat16_ins, WORD clusterN, WORD data) {
+int write_fat_entry(FAT16 *fat16_ins, WORD ClusterN, WORD data) {
   // Hint: 这个函数逻辑与fat_entry_by_cluster函数类似，但这个函数需要修改对应值并写回FAT表中
   BYTE SectorBuffer[BYTES_PER_SECTOR];
   /** TODO: 计算下列值，当然，你也可以不使用这些变量*/
-  uint FirstFatSecNum;  // 第一个FAT表开始的扇区号
-  uint ClusterOffset;   // clusterN这个簇对应的表项，在每个FAT表项的哪个偏移量
-  uint ClusterSec;      // clusterN这个簇对应的表项，在每个FAT表中的第几个扇区（Hint: 这个值与ClusterSec的关系是？）
-  uint SecOffset;       // clusterN这个簇对应的表项，在所在扇区的哪个偏移量（Hint: 这个值与ClusterSec的关系是？）
-  /*** BEGIN ***/
 
-
-  /*** END ***/
+  uint FirstFatSecNum = fat16_ins->Bpb.BPB_RsvdSecCnt;  // 第一个FAT表开始的扇区号
+  uint ClusterOffset = ClusterN * 2;   // clusterN这个簇对应的表项，在每个FAT表项的哪个偏移量
+  uint ClusterSec = FirstFatSecNum + (ClusterOffset / fat16_ins->Bpb.BPB_BytsPerSec);      // clusterN这个簇对应的表项，在每个FAT表中的第几个扇区（Hint: 这个值与ClusterSec的关系是？）
+  uint SecOffset = ClusterOffset % fat16_ins->Bpb.BPB_BytsPerSec;       // clusterN这个簇对应的表项，在所在扇区的哪个偏移量（Hint: 这个值与ClusterSec的关系是？）
+  
   // Hint: 对系统中每个FAT表都进行写入
-  for(uint i=0; i<fat16_ins->Bpb.BPB_NumFATS; i++) {
+  //FIXME:
+  for(uint i = 0; i<fat16_ins->Bpb.BPB_NumFATS; i++) {
     /*** BEGIN ***/
     // Hint: 计算出当前要写入的FAT表扇区号
     // Hint: 读扇区，在正确偏移量将值修改为data，写回扇区
 
+    fseek(fat16_ins->fd, (ClusterSec + i * (fat16_ins->Bpb.BPB_FATSz16)) * fat16_ins->Bpb.BPB_BytsPerSec + SecOffset, SEEK_SET);
+    fwrite(&data, sizeof(WORD), 1, fat16_ins->fd);
+    fflush(fat16_ins->fd);
+
+    // fseek(fd2, (ClusterSec + i * (fat16_ins->Bpb.BPB_FATSz16)) * fat16_ins->Bpb.BPB_BytsPerSec + SecOffset, SEEK_SET);
+    // fwrite(&data, sizeof(WORD), 1, fd2);
+    // fflush(fd2);
+
+    // fseek(fd3, (ClusterSec + i * (fat16_ins->Bpb.BPB_FATSz16)) * fat16_ins->Bpb.BPB_BytsPerSec + SecOffset, SEEK_SET);
+    // fwrite(&data, sizeof(WORD), 1, fd3);
+    // fflush(fd3);
 
     /*** END ***/
   }
-  return 0;
+
+  return 0; //参见part1 1091行
 }
 
 /**
@@ -94,7 +110,16 @@ WORD alloc_clusters(FAT16 *fat16_ins, uint32_t n)
   /** TODO: 扫描FAT表，找到n个空闲的簇，存入cluster数组。注意此时不需要修改对应的FAT表项 **/
   /*** BEGIN ***/
 
-
+  WORD ClusterN = 2;
+  while(allocated < n) {
+    if(fat_entry_by_cluster(fat16_ins, ClusterN) == 0) {
+      clusters[allocated] = ClusterN;
+      allocated ++;
+    }  
+    if(ClusterN == CLUSTER_END) break;
+    ClusterN ++;
+  }
+  
   /*** END ***/
 
   if(allocated != n) {  // 找不到n个簇，分配失败
@@ -108,6 +133,21 @@ WORD alloc_clusters(FAT16 *fat16_ins, uint32_t n)
   /** TODO: 修改clusters中存储的N个簇对应的FAT表项，将每个簇与下一个簇连接在一起。同时清零每一个新分配的簇。**/
   /*** BEGIN ***/
 
+  int bytes_per_clus = fat16_ins->Bpb.BPB_SecPerClus * fat16_ins->Bpb.BPB_BytsPerSec;
+  char tmp[bytes_per_clus];
+  memset(tmp, 0, bytes_per_clus);
+  for(int i = 0 ; i < n ; i++) {
+    write_fat_entry(fat16_ins, clusters[i], clusters[i + 1]);
+    fseek(fat16_ins->fd, get_cluster_offset(fat16_ins, clusters[i]), SEEK_SET);
+    fwrite(tmp, bytes_per_clus, 1, fat16_ins->fd);
+
+    // fseek(fd2, get_cluster_offset(fat16_ins, clusters[i]), SEEK_SET);
+    // fwrite(tmp, bytes_per_clus, 1, fd2);
+
+    // fseek(fd3, get_cluster_offset(fat16_ins, clusters[i]), SEEK_SET);
+    // fwrite(tmp, bytes_per_clus, 1, fd3);
+  }
+  fflush(fat16_ins->fd);
 
   /*** END ***/
 
@@ -131,14 +171,80 @@ int fat16_mkdir(const char *path, mode_t mode) {
   /* Gets volume data supplied in the context during the fat16_init function */
   FAT16 *fat16_ins = get_fat16_ins_fix();
 
-  int findFlag = 0;     // 是否找到空闲的目录项
-  int sectorNum = 0;    // 找到的空闲目录项所在扇区号
-  int offset = 0;       // 找到的空闲目录项在扇区中的偏移量
+  // int findFlag = 0;     // 是否找到空闲的目录项
+  // int sectorNum = 0;    // 找到的空闲目录项所在扇区号
+  // int offset = 0;       // 找到的空闲目录项在扇区中的偏移量
+
   /** TODO: 模仿mknod，计算出findFlag, sectorNum和offset的值
    *  你也可以选择不使用这些值，自己定义其它变量。注意本函数前半段和mknod前半段十分类似。
    **/
   /*** BEGIN ***/
+  int pathDepth;
+  char **paths = path_split((char *)path, &pathDepth);
+  char *copyPath = strdup(path);
+  const char **orgPaths = (const char **)org_path_split(copyPath);
+  char *prtPath = get_prt_path(path, orgPaths, pathDepth);
 
+  BYTE sector_buffer[BYTES_PER_SECTOR];
+  DWORD sectorNum;
+  int offset, i, findFlag = 0, RootDirCnt = 1, DirSecCnt = 1;
+  WORD ClusterN, FatClusEntryVal, FirstSectorofCluster;
+
+  /* If parent directory is root */
+  if (strcmp(prtPath, "/") == 0)
+  {
+    DIR_ENTRY Root;
+    printf("\n\n\npd: ptrPath: %s\n\n\n", prtPath);
+    sector_read(fat16_ins->fd, fat16_ins->FirstRootDirSecNum, sector_buffer);
+    
+    for (i = 1; i <= fat16_ins->Bpb.BPB_RootEntCnt; i++)
+    {
+      memcpy(&Root, &sector_buffer[((i - 1) * BYTES_PER_DIR) % BYTES_PER_SECTOR], BYTES_PER_DIR);
+      
+      if(Root.DIR_Name[0] == 0xe5 || Root.DIR_Name[0] == 0x00) {
+        findFlag = 1;
+        sectorNum = fat16_ins->FirstRootDirSecNum + RootDirCnt - 1;
+        offset = ((i - 1) * BYTES_PER_DIR) % BYTES_PER_SECTOR;
+        break;
+      }
+
+      if (i % 16 == 0 && i != fat16_ins->Bpb.BPB_RootEntCnt)
+      {
+        sector_read(fat16_ins->fd, fat16_ins->FirstRootDirSecNum + RootDirCnt, sector_buffer);
+        RootDirCnt++;
+      }
+    }
+  }
+  /* Else if parent directory is sub-directory */
+  else
+  {
+    DIR_ENTRY Dir;
+    off_t offset_dir;
+    if(find_root(fat16_ins, &Dir, prtPath, &offset_dir)) return -ENOENT;
+    ClusterN = Dir.DIR_FstClusLO;
+    first_sector_by_cluster(fat16_ins, ClusterN, &FatClusEntryVal, &FirstSectorofCluster, sector_buffer);
+    
+    printf("\n\n\npd: ptrPath: %s\n\n\n", prtPath);
+     while(ClusterN <= 0xffef && ClusterN > 0x0001 && findFlag == 0) {
+      DirSecCnt = 1;
+      first_sector_by_cluster(fat16_ins, ClusterN, &FatClusEntryVal, &FirstSectorofCluster, sector_buffer);
+      /* All dirs in the cluster */
+      for(i = 1;i <= fat16_ins->Bpb.BPB_SecPerClus * fat16_ins->Bpb.BPB_BytsPerSec / BYTES_PER_DIR ; i++) {
+        memcpy(&Dir, &sector_buffer[((i - 1) * BYTES_PER_DIR) % BYTES_PER_SECTOR], BYTES_PER_DIR);
+        if(Dir.DIR_Name[0] == 0x00 || Dir.DIR_Name[0] == 0xe5) {
+          sectorNum = FirstSectorofCluster + (DirSecCnt - 1);
+          offset = ((i - 1) % 16) * BYTES_PER_DIR;
+          findFlag = 1;
+          break;
+        }
+        if (i % 16 == 0 && i != fat16_ins->Bpb.BPB_SecPerClus * fat16_ins->Bpb.BPB_BytsPerSec / BYTES_PER_DIR) {
+          sector_read(fat16_ins->fd, FirstSectorofCluster + DirSecCnt, sector_buffer);
+          DirSecCnt++;
+        }
+      }
+      ClusterN = fat_entry_by_cluster(fat16_ins, ClusterN);
+    }
+  }
 
   /*** END ***/
 
@@ -150,6 +256,14 @@ int fat16_mkdir(const char *path, mode_t mode) {
   if (findFlag == 1) {
     /*** BEGIN ***/
 
+    WORD Cluster_New = alloc_clusters(fat16_ins, 1);
+    dir_entry_create(fat16_ins, sectorNum, offset, paths[pathDepth - 1], ATTR_DIRECTORY, Cluster_New , 0);
+    FatClusEntryVal = fat_entry_by_cluster(fat16_ins, Cluster_New);
+    FirstSectorofCluster = ((Cluster_New - 2) * fat16_ins->Bpb.BPB_SecPerClus) + fat16_ins->FirstDataSector;
+    char str1[] = ".";
+    char str2[] = "..";
+    dir_entry_create(fat16_ins, FirstSectorofCluster, 0, str1, ATTR_DIRECTORY, 0xffff, 0);
+    dir_entry_create(fat16_ins, FirstSectorofCluster, 32, str2, ATTR_DIRECTORY, 0xffff, 0);
 
     /*** END ***/
   }
@@ -170,6 +284,18 @@ void dir_entry_delete(FAT16 *fat16_ins, off_t offset) {
    */
   /*** BEGIN ***/
 
+  BYTE del = 0xe5;
+  fseek(fat16_ins->fd, offset, SEEK_SET);
+  fwrite(&del, sizeof(BYTE), 1, fat16_ins->fd);
+  fflush(fat16_ins->fd);
+
+  // fseek(fd2, offset, SEEK_SET);
+  // fwrite(&del, sizeof(BYTE), 1, fd2);
+  // fflush(fd2);
+
+  // fseek(fd3, offset, SEEK_SET);
+  // fwrite(&del, sizeof(BYTE), 1, fd3);
+  // fflush(fd3);
 
   /*** END ***/
 }
@@ -186,7 +312,27 @@ void dir_entry_write(FAT16 *fat16_ins, off_t offset, const DIR_ENTRY *Dir) {
   // TODO: 修改目录项，和dir_entry_delete完全类似，只是需要将整个Dir写入offset所在的位置。
   /*** BEGIN ***/
 
+  BYTE *entry_info = malloc(BYTES_PER_DIR * sizeof(BYTE));
+  memcpy(entry_info, Dir->DIR_Name, 11);
+  memcpy(entry_info + 11, &Dir->DIR_Attr, 1);
+  memset(entry_info + 12, 0, 10 * sizeof(BYTE));
+  memcpy(entry_info + 22, &Dir->DIR_WrtTime, 2 * sizeof(BYTE));
+  memcpy(entry_info + 24, &Dir->DIR_WrtDate, 2 * sizeof(BYTE));
+  memcpy(entry_info + 26, &Dir->DIR_FstClusLO, 2 * sizeof(BYTE));
+  memcpy(entry_info + 28, &Dir->DIR_FileSize, 4 * sizeof(BYTE));
+  fseek(fat16_ins->fd, offset, SEEK_SET);
+  fwrite(entry_info, sizeof(BYTE), 32, fat16_ins->fd);
+  fflush(fat16_ins->fd);
 
+  // fseek(fd2, offset, SEEK_SET);
+  // fwrite(entry_info, sizeof(BYTE), 32, fd2);
+  // fflush(fd2);
+
+  // fseek(fd3, offset, SEEK_SET);
+  // fwrite(entry_info, sizeof(BYTE), 32, fd3);
+  // fflush(fd3);
+
+  // free(entry_info);
   /*** END ***/
 }
 
@@ -224,14 +370,52 @@ int fat16_rmdir(const char *path) {
    **/
 
   /*** BEGIN ***/
+  WORD ClusterN;              // 当前读取的簇号
+  WORD FatClusEntryVal;       // 该簇的FAT表项（大部分情况下，代表下一个簇的簇号，请参考实验文档对FAT表项的说明）
+  WORD FirstSectorofCluster;  // 该簇的第一个扇区号
 
+  int DirSecCnt = 1, dir_cnt = 0;
+  BYTE sector_buffer[BYTES_PER_SECTOR];
 
+  ClusterN = Dir.DIR_FstClusLO; //目录项中存储了我们要读取的第一个簇的簇号
+  first_sector_by_cluster(fat16_ins, ClusterN, &FatClusEntryVal, &FirstSectorofCluster, sector_buffer);
+  
+  /* Start searching the root's sub-directories starting from Dir */
+  for (uint i = 1; Dir.DIR_Name[0] != 0x00; i++) {
+    memcpy(&Dir, &sector_buffer[((i - 1) * BYTES_PER_DIR) % BYTES_PER_SECTOR], BYTES_PER_DIR);
+    if(Dir.DIR_Name[0] != 0xe5 && ((Dir.DIR_Attr == ATTR_ARCHIVE) || Dir.DIR_Attr == ATTR_DIRECTORY)) {  //omit LNF
+      dir_cnt ++;
+    }
+    if (i % 16 == 0) {
+      if (DirSecCnt < fat16_ins->Bpb.BPB_SecPerClus) {
+        sector_read(fat16_ins->fd, FirstSectorofCluster + DirSecCnt, sector_buffer);
+        DirSecCnt++;
+      }
+      else {
+        if (FatClusEntryVal == 0xffff) {
+          return 0;
+        }
+        WORD NxtFatClusEntryVal = FatClusEntryVal;
+        first_sector_by_cluster(fat16_ins, NxtFatClusEntryVal, &FatClusEntryVal, &FirstSectorofCluster, sector_buffer);
+        i = 0;
+        DirSecCnt = 1;
+      }
+    }
+  }
+  if(dir_cnt > 2) {
+    printf("\n\n\n dir not empty.\n\n\n");
+    return -ENOTEMPTY;
+  }
   /*** END ***/
 
   // 已确认目录项为空，释放目录占用的簇
   // TODO: 循环调用free_cluster释放对应簇，和unlink类似。
   /*** BEGIN ***/
 
+  int ClusterNum = Dir.DIR_FstClusLO;
+  while(ClusterNum > 1 && ClusterNum < 0xffff) {
+    ClusterNum = free_cluster(fat16_ins, ClusterNum);
+  }
 
   /*** END ***/
 
@@ -240,6 +424,7 @@ int fat16_rmdir(const char *path) {
   //       你也可以使用你在unlink使用的方法。
   /*** BEGIN ***/
 
+  dir_entry_delete(fat16_ins, offset);
 
   /*** END ***/
 
@@ -270,6 +455,58 @@ size_t write_to_cluster_at_offset(FAT16 *fat16_ins, WORD clusterN, off_t offset,
    */
   /*** BEGIN ***/
 
+  WORD ClusterN, FatClusEntryVal, FirstSectorofCluster;
+  size_t size_cp = size;
+  first_sector_by_cluster(fat16_ins, clusterN, &FatClusEntryVal, &FirstSectorofCluster, sector_buffer);
+
+  FirstSectorofCluster = FirstSectorofCluster + offset / fat16_ins->Bpb.BPB_BytsPerSec; //要写入的第一个扇区号
+  offset = offset % fat16_ins->Bpb.BPB_BytsPerSec;
+  fseek(fat16_ins->fd, FirstSectorofCluster * fat16_ins->Bpb.BPB_BytsPerSec + offset, SEEK_SET);
+
+  printf("\n\n\n\noffset: %ld\nsize: %ld\n\n\n\n", offset, size);
+  if(offset + size <= fat16_ins->Bpb.BPB_BytsPerSec) {
+
+    fwrite((const char *)data, sizeof(char), size , fat16_ins->fd);
+
+    // fwrite((const char *)data, sizeof(char), size , fd2);
+    // fwrite((const char *)data, sizeof(char), size , fd3);
+
+    fflush(fat16_ins->fd);
+    return size;
+
+  } else {
+    fwrite((const char *)data, sizeof(char), fat16_ins->Bpb.BPB_BytsPerSec - offset , fat16_ins->fd);
+
+    // fwrite((const char *)data, sizeof(char), fat16_ins->Bpb.BPB_BytsPerSec - offset , fd2);
+    // fwrite((const char *)data, sizeof(char), fat16_ins->Bpb.BPB_BytsPerSec - offset , fd3);
+
+    size_cp = size - fat16_ins->Bpb.BPB_BytsPerSec + offset;
+    data += fat16_ins->Bpb.BPB_BytsPerSec + offset;
+  }
+
+  while(size_cp > fat16_ins->Bpb.BPB_BytsPerSec) {
+    fwrite((const char *)data, sizeof(char), BYTES_PER_SECTOR , fat16_ins->fd);
+
+    // fwrite((const char *)data, sizeof(char), BYTES_PER_SECTOR , fd2);
+    // fwrite((const char *)data, sizeof(char), BYTES_PER_SECTOR , fd3);
+
+    data += BYTES_PER_SECTOR;
+    size_cp -= BYTES_PER_SECTOR;
+  }
+  fwrite((const char *)data, sizeof(char), size_cp, fat16_ins->fd);
+
+  // fwrite((const char *)data, sizeof(char), size_cp, fd2);
+  // fwrite((const char *)data, sizeof(char), size_cp, fd3);
+
+  fflush(fat16_ins->fd);
+
+  // fflush(fd2);
+  // fflush(fd3);
+
+  /* directly write through sectors also seems to be right */
+  // fseek(fat16_ins->fd, FirstSectorofCluster * fat16_ins->Bpb.BPB_BytsPerSec + offset, SEEK_SET);
+  // fwrite((const char *)data, sizeof(char), size, fat16_ins->fd);
+  // fflush(fat16_ins->fd);
 
   /*** END ***/
   return size;
@@ -292,6 +529,18 @@ WORD file_last_cluster(FAT16 *fat16_ins, DIR_ENTRY *Dir, int64_t *count) {
   // HINT: 可能用到的函数：is_cluster_inuse和fat_entry_by_cluster函数。
   /*** BEGIN ***/
 
+  WORD ClusterN = Dir->DIR_FstClusLO;
+	WORD ClusterPre = ClusterN;
+	WORD ClusterNxt = ClusterNxt;
+
+	//calculate how many cluster the file has.
+	while(is_cluster_inuse(ClusterPre)) {
+		cnt++;
+		ClusterNxt = fat_entry_by_cluster(fat16_ins, ClusterPre);
+		if(!is_cluster_inuse(ClusterNxt))
+			cur = ClusterPre;
+		ClusterPre = ClusterNxt;
+	}
 
   /*** END ***/
   if(count != NULL) { // 如果count为NULL，不填充count
@@ -318,6 +567,13 @@ int file_new_cluster(FAT16 *fat16_ins, DIR_ENTRY *Dir, WORD last_cluster, DWORD 
    */
   /*** BEGIN ***/
 
+  WORD ClusterN;
+  ClusterN = alloc_clusters(fat16_ins , count);
+  if(!is_cluster_inuse(last_cluster)) {
+    Dir->DIR_FstClusLO = ClusterN;
+  } else {
+    write_fat_entry(fat16_ins, last_cluster, ClusterN);
+  }
 
   /*** END ***/
   return last_cluster;
@@ -326,7 +582,7 @@ int file_new_cluster(FAT16 *fat16_ins, DIR_ENTRY *Dir, WORD last_cluster, DWORD 
 /**
  * @brief 在文件offset的位置写入buff中的数据，数据长度为length。
  * 
- * @param fat16_ins   文件系统执政
+ * @param fat16_ins   文件系统指针
  * @param Dir         要写入的文件目录项
  * @param offset_dir  find_root返回的offset_dir值
  * @param buff        要写入的数据
@@ -336,7 +592,7 @@ int file_new_cluster(FAT16 *fat16_ins, DIR_ENTRY *Dir, WORD last_cluster, DWORD 
  */
 int write_file(FAT16 *fat16_ins, DIR_ENTRY *Dir, off_t offset_dir, const void *buff, off_t offset, size_t length)
 {
-
+  printf("\n\n\nHere is write_file \n\n\n");
   if (length == 0)
     return 0;
 
@@ -348,6 +604,17 @@ int write_file(FAT16 *fat16_ins, DIR_ENTRY *Dir, off_t offset_dir, const void *b
    */
   /*** BEGIN ***/
 
+  int64_t count;
+  int bytes_per_clus = fat16_ins->Bpb.BPB_SecPerClus * fat16_ins->Bpb.BPB_BytsPerSec;
+  WORD ClusterN = file_last_cluster(fat16_ins, Dir, &count);
+  int cluster_count = (length + offset - 1) / bytes_per_clus + 1;
+  int cluster_req = cluster_count - count;
+
+  printf("\n\n\ncluster_req: %d \n\n\n", cluster_req);
+
+  if(cluster_req > 0) { //需要分配新簇
+    file_new_cluster(fat16_ins, Dir, ClusterN, cluster_req);
+  }
 
   /*** END ***/
 
@@ -357,9 +624,58 @@ int write_file(FAT16 *fat16_ins, DIR_ENTRY *Dir, off_t offset_dir, const void *b
   /*** BEGIN ***/
   // HINT: 记得把修改过的Dir写回目录项（如果你之前没有写回）
 
+  ClusterN = Dir->DIR_FstClusLO;
+  WORD FatClusEntryVal = fat_entry_by_cluster(fat16_ins, ClusterN);
+  WORD FirstSectorofCluster = ((ClusterN - 2) * fat16_ins->Bpb.BPB_SecPerClus) + fat16_ins->FirstDataSector;
 
+  off_t off_tmp;
+  size_t length_tmp = length;
+  
+  for(off_tmp = offset; off_tmp > bytes_per_clus; off_tmp -= bytes_per_clus) {
+    ClusterN = fat_entry_by_cluster(fat16_ins, ClusterN);
+  } //找到从哪个簇开始写
+
+  printf("\n\n\noff_tmp:%ld length: %ld\n\n\n", off_tmp , length);
+
+  if(off_tmp + length <= fat16_ins->ClusterSize) {
+    write_to_cluster_at_offset(fat16_ins, ClusterN, off_tmp, buff, length);
+  } else {
+    write_to_cluster_at_offset(fat16_ins, ClusterN, off_tmp, buff, bytes_per_clus - off_tmp);
+
+    printf("\n\n\nbpc - offset: %ld\n\n\n", bytes_per_clus - off_tmp);
+
+    buff += bytes_per_clus - off_tmp;
+    length -= bytes_per_clus - off_tmp;
+    ClusterN = fat_entry_by_cluster(fat16_ins, ClusterN);
+
+    while(length > bytes_per_clus) {
+      write_to_cluster_at_offset(fat16_ins, ClusterN, 0, buff, bytes_per_clus);
+      buff += bytes_per_clus;
+      ClusterN = fat_entry_by_cluster(fat16_ins, ClusterN);
+      length -= bytes_per_clus;
+    }
+
+    write_to_cluster_at_offset(fat16_ins, ClusterN, 0, buff, length);
+  }
+  //FIXME:
+  time_t timer_s;
+  time(&timer_s);
+  struct tm *time_ptr = localtime(&timer_s);
+  int value;
+
+  value = time_ptr->tm_sec / 2 + (time_ptr->tm_min << 5) + (time_ptr->tm_hour << 11);
+  Dir->DIR_WrtTime = value;
+  value = time_ptr->tm_mday + (time_ptr->tm_mon << 5) + ((time_ptr->tm_year - 80) << 9);
+  Dir->DIR_WrtDate = value;
+  Dir->DIR_Attr = ATTR_ARCHIVE;
+  Dir->DIR_FileSize = Dir->DIR_FileSize + length_tmp;
+  
+  dir_entry_write(fat16_ins, offset_dir, Dir);
+  printf("\n\n\nfilesize: %d \n\n\n",Dir->DIR_FileSize);
+
+  return length_tmp;
   /*** END ***/
-  return 0;
+  //return 0;
 }
 
 /**
@@ -376,14 +692,21 @@ int write_file(FAT16 *fat16_ins, DIR_ENTRY *Dir, off_t offset_dir, const void *b
 int fat16_write(const char *path, const char *data, size_t size, off_t offset,
                 struct fuse_file_info *fi)
 {
+  printf("\n\n\nHere is fat16_write \n\n\n");
+
   FAT16 *fat16_ins = get_fat16_ins_fix();
   /** TODO: 大部分工作都在write_file里完成了，这里调用find_root获得目录项，然后调用write_file即可
    */
   /*** BEGIN ***/
+  DIR_ENTRY Dir;
+  off_t dir_offset;
+  if(!find_root(fat16_ins, &Dir, path, &dir_offset)) {
+    return write_file(fat16_ins, &Dir, dir_offset, data, offset, size);
+  }
 
-
+  else return -ENOENT;
   /*** END ***/
-  return 0;
+  //return 0;
 }
 
 /**
@@ -398,6 +721,7 @@ int fat16_write(const char *path, const char *data, size_t size, off_t offset,
  */
 int fat16_truncate(const char *path, off_t size)
 {
+    printf("\n\n\nHere is truncate \n\n\n");
   /* Gets volume data supplied in the context during the fat16_init function */
   FAT16 *fat16_ins = get_fat16_ins_fix();
 
@@ -420,6 +744,17 @@ int fat16_truncate(const char *path, off_t size)
     /** TODO: 增大文件大小，注意是否需要分配新簇，以及往新分配的空间填充0等 **/
     /*** BEGIN ***/
 
+    WORD last_clus;
+    int64_t cluster_req = new_cluster_count - cur_cluster_count;
+    if(cluster_req > 0) { //需要分配新簇
+      last_clus = file_new_cluster(fat16_ins, &Dir, last_cluster, cluster_req);
+    }
+    //FIXME: FILL ZERO
+    DWORD last_off = old_size % fat16_ins->ClusterSize;
+    int bytes_per_clus = fat16_ins->Bpb.BPB_SecPerClus * fat16_ins->Bpb.BPB_BytsPerSec;
+    char tmp[bytes_per_clus];
+    memset(tmp, 0, bytes_per_clus);
+    write_to_cluster_at_offset(fat16_ins, last_clus, last_off, (const BYTE *)tmp, bytes_per_clus - last_off);
 
     /*** END ***/
 
@@ -427,8 +762,35 @@ int fat16_truncate(const char *path, off_t size)
       /** TODO: 截断文件，注意是否需要释放簇等 **/
       /*** BEGIN ***/
 
+      WORD ClusterN = Dir.DIR_FstClusLO;
+      int cnt = 0;
+      while(cnt < new_cluster_count - 1) {
+        ClusterN = fat_entry_by_cluster(fat16_ins, ClusterN);
+        cnt ++;
+      }
+      WORD ClusterNum = ClusterN;
+      write_fat_entry(fat16_ins, ClusterN, CLUSTER_END);
+
+      //Free
+      while(ClusterNum > 1 && ClusterNum < 0xffff) {
+        ClusterNum = free_cluster(fat16_ins, ClusterNum);
+      }
 
       /*** END ***/
   }
+
+  time_t timer_s;
+  time(&timer_s);
+  struct tm *time_ptr = localtime(&timer_s);
+  int value;
+
+  value = time_ptr->tm_sec / 2 + (time_ptr->tm_min << 5) + (time_ptr->tm_hour << 11);
+  Dir.DIR_WrtTime = value;
+  value = time_ptr->tm_mday + (time_ptr->tm_mon << 5) + ((time_ptr->tm_year - 80) << 9);
+  Dir.DIR_WrtDate = value;
+  Dir.DIR_Attr = ATTR_ARCHIVE;
+  Dir.DIR_FileSize = new_size;
+  dir_entry_write(fat16_ins, offset_dir, &Dir);
+  
   return 0;
 }

@@ -9,7 +9,10 @@
 
 #include "fat16.h"
 
-
+const char *FAT_FILE_NAME2 = "fat16_2.img";
+const char *FAT_FILE_NAME3 = "fat16_3.img";
+FILE *fd2;
+FILE *fd3;
 
 const char *FAT_FILE_NAME = "fat16.img";
 
@@ -20,11 +23,70 @@ const char *FAT_FILE_NAME = "fat16.img";
  * @param secnum  需要读取的扇区号
  * @param buffer  数据要存储到的缓冲区指针
  */
+
 void sector_read(FILE *fd, unsigned int secnum, void *buffer)
 {
   fseek(fd, BYTES_PER_SECTOR * secnum, SEEK_SET);
   fread(buffer, BYTES_PER_SECTOR, 1, fd);
 }
+
+// void sector_read(FILE *fd, unsigned int secnum, void *buffer)
+// {
+//   char buf_tmp1[BYTES_PER_SECTOR];
+//   char buf_tmp2[BYTES_PER_SECTOR];
+//   char buf_tmp3[BYTES_PER_SECTOR];
+//   memset(buf_tmp1, 0, BYTES_PER_SECTOR);
+//   memset(buf_tmp2, 0, BYTES_PER_SECTOR);
+//   memset(buf_tmp3, 0, BYTES_PER_SECTOR);
+
+//   fseek(fd, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//   //fread(buffer, BYTES_PER_SECTOR, 1, fd);
+//   /* copy */
+//   fread(buf_tmp1, BYTES_PER_SECTOR, 1, fd);
+//   fseek(fd2, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//   fread(buf_tmp2, BYTES_PER_SECTOR, 1, fd2);
+//   fseek(fd3, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//   fread(buf_tmp3, BYTES_PER_SECTOR, 1, fd3);
+
+//   int cmp12 = strcmp((const char *)buf_tmp1,(const char *)buf_tmp2);
+//   int cmp23 = strcmp((const char *)buf_tmp2,(const char *)buf_tmp3);
+//   int cmp31 = strcmp((const char *)buf_tmp3,(const char *)buf_tmp1);
+
+//   if(cmp12 == 0 && cmp23 == 0 && cmp31 == 0 ) {
+//     fseek(fd, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//     fread(buffer, BYTES_PER_SECTOR, 1, fd);
+//   } else if(cmp12 == 0 && cmp23 != 0 && cmp31 != 0) {
+//     //copy 3 fails
+//     fseek(fd, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//     fread(buffer, BYTES_PER_SECTOR, 1, fd);
+//     //fix copy3
+//     fseek(fd3, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//     fwrite(buf_tmp1, BYTES_PER_SECTOR, 1, fd3);
+//     fflush(fd3);
+
+//   } else if(cmp12 != 0 && cmp23 != 0 && cmp31 == 0) {
+//     //copy 2 fails
+//     fseek(fd, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//     fread(buffer, BYTES_PER_SECTOR, 1, fd);
+//     //fix copy2
+//     fseek(fd2, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//     fwrite(buf_tmp1, BYTES_PER_SECTOR, 1, fd2);
+//     fflush(fd2);
+
+//   } else if(cmp12 != 0 && cmp23 == 0 && cmp31 != 0) {
+//     //copy 1 fails
+//     fseek(fd2, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//     fread(buffer, BYTES_PER_SECTOR, 1, fd2);
+//     //fix copy1
+//     fseek(fd, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//     fwrite(buf_tmp2, BYTES_PER_SECTOR, 1, fd);
+//     fflush(fd);
+//   } else {
+//     fseek(fd, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//     fread(buffer, BYTES_PER_SECTOR, 1, fd); //bai lan
+//   }
+
+// }
 
 /**
  * @brief 将buffer中的数据写入到扇区号为secnum的扇区中
@@ -33,12 +95,28 @@ void sector_read(FILE *fd, unsigned int secnum, void *buffer)
  * @param secnum  需要写入的扇区号
  * @param buffer  需要写入的数据
  */
+
 void sector_write(FILE *fd, unsigned int secnum, const void *buffer)
 {
   fseek(fd, BYTES_PER_SECTOR * secnum, SEEK_SET);
   fwrite(buffer, BYTES_PER_SECTOR, 1, fd);
   fflush(fd);
 }
+
+// void sector_write(FILE *fd, unsigned int secnum, const void *buffer)
+// {
+//   fseek(fd, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//   fwrite(buffer, BYTES_PER_SECTOR, 1, fd);
+//   fflush(fd);
+
+//   fseek(fd2, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//   fwrite(buffer, BYTES_PER_SECTOR, 1, fd2);
+//   fflush(fd2);
+
+//   fseek(fd3, BYTES_PER_SECTOR * secnum, SEEK_SET);
+//   fwrite(buffer, BYTES_PER_SECTOR, 1, fd3);
+//   fflush(fd3);
+// }
 
 /**
  * @brief 从fuse中获取存储了文件系统元数据的FAT16指针
@@ -263,6 +341,9 @@ FAT16 *pre_init_fat16(const char *imageFilePath)
 {
   /* Opening the FAT16 image file */
   FILE *fd = fopen(imageFilePath, "rb+");
+
+  // fd2 = fopen(FAT_FILE_NAME2, "rb+");
+  // fd3 = fopen(FAT_FILE_NAME3, "rb+");
 
   if (fd == NULL)
   {
@@ -1055,6 +1136,14 @@ int dir_entry_create(FAT16 *fat16_ins, int sectorNum, int offset, char *Name, BY
   fwrite(entry_info, sizeof(BYTE), 32, fat16_ins->fd);
   fflush(fat16_ins->fd);
 
+  // fseek(fd2, sectorNum * fat16_ins->Bpb.BPB_BytsPerSec + offset, SEEK_SET);
+  // fwrite(entry_info, sizeof(BYTE), 32, fd2);
+  // fflush(fd2);
+
+  // fseek(fd3, sectorNum * fat16_ins->Bpb.BPB_BytsPerSec + offset, SEEK_SET);
+  // fwrite(entry_info, sizeof(BYTE), 32, fd3);
+  // fflush(fd3);
+
   /*** END ***/
   free(entry_info);
   return 0;
@@ -1089,13 +1178,29 @@ int free_cluster(FAT16 *fat16_ins, int ClusterNum)
 
 	WORD temp = 0;
 	fseek(fd, FatSecNum1 * fat16_ins->Bpb.BPB_BytsPerSec + FatEntOffset, SEEK_SET);
-  int sz1 = fwrite(&temp, sizeof(WORD), 1, fd);
+  fwrite(&temp, sizeof(WORD), 1, fd);
   fflush(fd);
 
 	fd = fat16_ins->fd;
 	fseek(fd, FatSecNum2 * fat16_ins->Bpb.BPB_BytsPerSec + FatEntOffset, SEEK_SET);
-  int sz2 = fwrite(&temp, sizeof(WORD), 1, fd);
+  fwrite(&temp, sizeof(WORD), 1, fd);
   fflush(fd);
+
+  // fseek(fd2, FatSecNum1 * fat16_ins->Bpb.BPB_BytsPerSec + FatEntOffset, SEEK_SET);
+  // fwrite(&temp, sizeof(WORD), 1, fd2);
+  // fflush(fd2);
+
+	// fseek(fd2, FatSecNum2 * fat16_ins->Bpb.BPB_BytsPerSec + FatEntOffset, SEEK_SET);
+  // fwrite(&temp, sizeof(WORD), 1, fd2);
+  // fflush(fd2);
+
+  // fseek(fd3, FatSecNum1 * fat16_ins->Bpb.BPB_BytsPerSec + FatEntOffset, SEEK_SET);
+  // fwrite(&temp, sizeof(WORD), 1, fd3);
+  // fflush(fd3);
+
+	// fseek(fd3, FatSecNum2 * fat16_ins->Bpb.BPB_BytsPerSec + FatEntOffset, SEEK_SET);
+  // fwrite(&temp, sizeof(WORD), 1, fd3);
+  // fflush(fd3);
 
   /*** END ***/
 
@@ -1257,8 +1362,17 @@ int fat16_unlink(const char *path)
     FILE *fd = fat16_ins->fd;
 		BYTE del = 0xe5;
 		fseek(fd, sectorNum * fat16_ins->Bpb.BPB_BytsPerSec + offset, SEEK_SET);
-  	int sz = fwrite(&del, sizeof(BYTE), 1, fd);
+  	fwrite(&del, sizeof(BYTE), 1, fd);
     fflush(fd);
+
+
+    // fseek(fd2, sectorNum * fat16_ins->Bpb.BPB_BytsPerSec + offset, SEEK_SET);
+  	// fwrite(&del, sizeof(BYTE), 1, fd2);
+    // fflush(fd2);
+
+    // fseek(fd3, sectorNum * fat16_ins->Bpb.BPB_BytsPerSec + offset, SEEK_SET);
+  	// fwrite(&del, sizeof(BYTE), 1, fd3);
+    // fflush(fd3);
 
     /*** END ***/
   }
