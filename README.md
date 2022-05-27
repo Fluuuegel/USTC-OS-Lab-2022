@@ -18,5 +18,5 @@
 
 + Lab4: three-back-up (1) and Log (1).
 
-I did the mutipipe and redirector in lab2 and three-back-up in lab4.
+I finished the mutipipe and redirector in lab2 and three-back-up in lab4.
 
